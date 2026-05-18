@@ -3,116 +3,155 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milney Digital Cash</title>
+    <title>Milney GPS Digital Cash</title>
+    <script src="https://cdn.pubnub.com/sdk/javascript/pubnub.4.29.9.min.js"></script>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #121212;
-            color: #ffffff;
-            text-align: center;
-            padding: 20px;
-            margin: 0;
-        }
-        .container {
-            max-width: 400px;
-            margin: 0 auto;
-            background: #1e1e1e;
-            padding: 30px;
-            border-radius: 20px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-        }
-        h1 { color: #00adb5; font-size: 28px; margin-bottom: 30px; }
-        button {
-            width: 100%;
-            padding: 15px;
-            margin: 10px 0;
-            font-size: 18px;
-            font-weight: bold;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-            transition: 0.3s;
-        }
-        .btn-pay { background-color: #00adb5; color: white; }
-        .btn-term { background-color: #393e46; color: white; border: 2px solid #00adb5; }
-        .btn-pay:active, .btn-term:active { transform: scale(0.98); }
-        #status {
-            margin-top: 30px;
-            padding: 15px;
-            background: #252525;
-            border-radius: 10px;
-            font-size: 16px;
-            min-height: 50px;
-            border-left: 5px solid #00adb5;
-        }
+        body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
+        .box { background: #1e1e1e; padding: 20px; border-radius: 15px; max-width: 380px; margin: 20px auto; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        h1 { color: #00adb5; }
+        input { width: 90%; padding: 12px; margin: 10px 0; background: #252525; border: 1px solid #00adb5; color: white; border-radius: 8px; font-size: 16px; text-align: center; }
+        button { width: 95%; padding: 15px; margin: 10px 0; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; }
+        .btn-term { background: #00adb5; color: white; }
+        .btn-pay { background: #393e46; color: white; border: 2px solid #00adb5; }
+        #statusz { margin-top: 20px; padding: 15px; background: #252525; border-radius: 8px; font-size: 14px; min-height: 40px; border-left: 5px solid #00adb5; }
+        .egyenleg { font-size: 20px; color: #28c76f; font-weight: bold; margin: 15px 0; }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <h1>Milney NFC Fizetés</h1>
+<div class="box">
+    <h1>Milney GPS Pay</h1>
     
-    <button class="btn-pay" onclick="inditKuldés()">Pénz küldése (1000 Ft)</button>
-    <button class="btn-term" onclick="inditOlvasas()">Terminál mód (Fogadás)</button>
+    <div class="egyenleg">Saját egyenleg: <span id="egyenlegKijelzo">5000</span> Ft</div>
+    
+    <div id="gps-info">GPS lekérése...</div>
+    <hr style="border-color: #333;">
 
-    <div id="status">Válassz egy funkciót a kezdéshez!</div>
+    <h3>[ 1. Telefon: TERMINÁL ]</h3>
+    <input type="number" id="osszegInput" placeholder="Beírandó összeg (Ft)">
+    <button class="btn-term" onclick="fizetesKerese()">Pénz levonása (Kérés)</button>
+
+    <h3>[ 2. Telefon: FIZETŐ ]</h3>
+    <button class="btn-pay" onclick="fizetoModBe()">Fizető mód aktiválása</button>
+
+    <div id="statusz">Válassz funkciót a telefonodon!</div>
 </div>
 
 <script>
-    const statuszKijelzo = document.getElementById('status');
+    let sajatLat = 0;
+    let sajatLon = 0;
+    let egyenleg = 5000;
+    let szerep = "none";
 
-    // 1. FUNKCIÓ: Pénz küldése (NFC Írás)
-    async function inditKuldés() {
-        if ('NDEFReader' in window) {
-            try {
-                const ndef = new NDEFReader();
-                statuszKijelzo.innerHTML = "Érintsd a telefonod a terminálhoz a küldéshez...";
-                statuszKijelzo.style.borderColor = "#ff9f43";
-                
-                // Felkészítjük az adatot küldésre
-                await ndef.write("SIKERES_FIZETES_1000_FT");
-                
-                statuszKijelzo.innerHTML = "💰 1000 Ft sikeresen átadva!";
-                statuszKijelzo.style.borderColor = "#28c76f";
-            } catch (error) {
-                statuszKijelzo.innerHTML = "Hiba a küldés során: " + error;
-                statuszKijelzo.style.borderColor = "#ea5455";
-            }
-        } else {
-            statuszKijelzo.innerHTML = "Az NFC nem támogatott ezen a böngészőn/telefonon! (Használj Chrome-ot Androidon)";
-        }
+    // Ingyenes teszt kulcsok a valós idejű hálózathoz
+    const pubnub = new PubNub({
+        publishKey: "pub-c-cb677fa9-0d1a-4933-bfdd-a01c80145217",
+        subscribeKey: "sub-c-497df57a-9bb7-11eb-bc5a-a2ff7d4dfbf7",
+        uuid: "user_" + Math.floor(Math.random() * 1000)
+    });
+
+    // Feliratkozunk a közös fizetési csatornára
+    pubnub.subscribe({ channels: ['milney_payment_channel'] });
+
+    // GPS Pozíció folyamatos követése
+    if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(position => {
+            sajatLat = position.coords.latitude;
+            sajatLon = position.coords.longitude;
+            document.getElementById('gps-info').innerHTML = `📍 GPS OK (Pontosság: ±${Math.round(position.coords.accuracy)}m)`;
+        }, error => {
+            document.getElementById('gps-info').innerHTML = "❌ GPS hiba! Engedélyezd a helymeghatározást.";
+        }, { enableHighAccuracy: true });
     }
 
-    // 2. FUNKCIÓ: Pénz fogadása (NFC Olvasás)
-    async function inditOlvasas() {
-        if ('NDEFReader' in window) {
-            try {
-                const ndef = new NDEFReader();
-                await ndef.scan();
-                statuszKijelzo.innerHTML = "📲 Terminál aktív. Várja a fizető felet...";
-                statuszKijelzo.style.borderColor = "#00adb5";
+    // Két GPS koordináta távolságának kiszámítása méterben (Haversine formula)
+    function tavolsagKiszamolo(lat1, lon1, lat2, lon2) {
+        const R = 6371e3; // Föld sugara méterben
+        const phi1 = lat1 * Math.PI/180;
+        const phi2 = lat2 * Math.PI/180;
+        const deltaPhi = (lat2-lat1) * Math.PI/180;
+        const deltaLambda = (lon2-lon1) * Math.PI/180;
 
-                ndef.onreading = event => {
-                    const decoder = new TextDecoder();
-                    for (const record of event.message.records) {
-                        const kapottAdat = decoder.decode(record.data);
+        const a = Math.sin(deltaPhi/2) * Math.sin(deltaPhi/2) +
+                  Math.cos(phi1) * Math.cos(phi2) *
+                  Math.sin(deltaLambda/2) * Math.sin(deltaLambda/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+        return R * c; // Méterben kapjuk meg
+    }
+
+    // 1. TELEFON (TERMINÁL): Pénz kérése gomb
+    function fizetesKerese() {
+        const levonandoOsszeg = parseInt(document.getElementById('osszegInput').value);
+        if (!levonandoOsszeg || levonandoOsszeg <= 0) {
+            alert("Írj be egy normális összeget!");
+            return;
+        }
+        szerep = "terminal";
+        document.getElementById('statusz').innerHTML = `⏳ Kérés elküldve: ${levonandoOsszeg} Ft. Várakozás a közeli fizetőre...`;
+
+        // Elküldjük a hálózatra a koordinátáinkat és a kért összeget
+        pubnub.publish({
+            channel: 'milney_payment_channel',
+            message: {
+                tipus: "FIZETES_KERES",
+                osszeg: levonandoOsszeg,
+                lat: sajatLat,
+                lon: sajatLon
+            }
+        });
+    }
+
+    // 2. TELEFON (FIZETŐ): Bejelentkezik, hogy ő fizetni akar
+    function fizetoModBe() {
+        szerep = "fizeto";
+        document.getElementById('statusz').innerHTML = "📲 Fizető mód aktív. Várakozás a terminál jelére...";
+    }
+
+    // HÁTTÉR LOGIKA: Figyeljük a hálózaton érkező üzeneteket
+    pubnub.addListener({
+        message: function(event) {
+            const adat = event.message;
+
+            // Ha FIZETŐ vagyok és érkezik egy KÉRÉS a hálózatról
+            if (szerep === "fizeto" && adat.tipus === "FIZETES_KERES") {
+                // Kiszámoljuk, milyen messze van tőlünk a Terminál
+                const tavolsag = tavolsagKiszamolo(sajatLat, sajatLon, adat.lat, adat.lon);
+                
+                // Mivel a GPS pontossága ingadozik, 15 méteres körzeten belül elfogadjuk "egymás mellettinek"
+                if (tavolsag <= 15) { 
+                    if (egyenleg >= adat.osszeg) {
+                        egyenleg -= adat.osszeg;
+                        document.getElementById('egyenlegKijelzo').innerText = egyenleg;
+                        document.getElementById('statusz').innerHTML = `✅ <b>Sikeres fizetés!</b><br>Levonva: ${adat.osszeg} Ft a közeli terminál javára.`;
                         
-                        if(kapottAdat === "SIKERES_FIZETES_1000_FT") {
-                            statuszKijelzo.innerHTML = "✅ <b>Sikeres fizetés!</b><br>Beérkezett: 1000 Ft";
-                            statuszKijelzo.style.borderColor = "#28c76f";
-                        } else {
-                            statuszKijelzo.innerHTML = "Ismeretlen NFC adat: " + kapottAdat;
-                        }
+                        // Visszaküldjük a terminálnak, hogy a levonás sikeres volt
+                        pubnub.publish({
+                            channel: 'milney_payment_channel',
+                            message: {
+                                tipus: "SIKERES_NYUGTA",
+                                statusz: "OK",
+                                lat: sajatLat,
+                                lon: sajatLon
+                            }
+                        });
+                    } else {
+                        document.getElementById('statusz').innerHTML = "❌ Nincs elég egyenleged a fizetéshez!";
                     }
-                };
-            } catch (error) {
-                statuszKijelzo.innerHTML = "Hiba az olvasásnál: " + error;
-                statuszKijelzo.style.borderColor = "#ea5455";
+                }
             }
-        } else {
-            statuszKijelzo.innerHTML = "Az NFC nem támogatott ezen a böngészőn/telefonon!";
+
+            // Ha TERMINÁL vagyok és megérkezik a SIKERES NYUGTA a közelemből
+            if (szerep === "terminal" && adat.tipus === "SIKERES_NYUGTA") {
+                const tavolsag = tavolsagKiszamolo(sajatLat, sajatLon, adat.lat, adat.lon);
+                if (tavolsag <= 15) {
+                    const levont = document.getElementById('osszegInput').value;
+                    document.getElementById('statusz').innerHTML = `💰 <b>Sikeres tranzakció!</b><br>${levont} Ft sikeresen levonva a közeli ügyféltől.`;
+                    szerep = "none"; // Reset
+                }
+            }
         }
-    }
+    });
 </script>
 
 </body>
