@@ -3,154 +3,109 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milney GPS Digital Cash v2</title>
+    <title>Milney Bluetooth Cash</title>
     <script src="https://cdn.pubnub.com/sdk/javascript/pubnub.4.29.9.min.js"></script>
     <style>
         body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
-        .box { background: #1e1e1e; padding: 20px; border-radius: 15px; max-width: 380px; margin: 20px auto; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        .box { background: #1e1e1e; padding: 20px; border-radius: 15px; max-width: 360px; margin: 20px auto; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
         h1 { color: #00adb5; }
         input { width: 90%; padding: 12px; margin: 10px 0; background: #252525; border: 1px solid #00adb5; color: white; border-radius: 8px; font-size: 16px; text-align: center; }
         button { width: 95%; padding: 15px; margin: 10px 0; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; }
         .btn-term { background: #00adb5; color: white; }
         .btn-pay { background: #393e46; color: white; border: 2px solid #00adb5; }
         #statusz { margin-top: 20px; padding: 15px; background: #252525; border-radius: 8px; font-size: 14px; min-height: 40px; border-left: 5px solid #00adb5; }
-        .egyenleg { font-size: 20px; color: #28c76f; font-weight: bold; margin: 15px 0; }
-        #tavolsag-mero { font-weight: bold; color: #ff9f43; margin: 10px 0; font-size: 16px; }
+        .egyenleg { font-size: 24px; color: #28c76f; font-weight: bold; margin: 15px 0; }
+        #jel-ero { color: #ff9f43; font-weight: bold; margin: 10px 0; }
     </style>
 </head>
 <body>
 
 <div class="box">
-    <h1>Milney GPS Pay v2</h1>
+    <h1>Milney Bluetooth Pay</h1>
     
-    <div class="egyenleg">Saját egyenleg: <span id="egyenlegKijelzo">5000</span> Ft</div>
-    
-    <div id="gps-info">GPS koordináták lekérése...</div>
-    <div id="tavolsag-mero">Mért távolság a másik telefontól: -</div>
+    <div class="egyenleg">Egyenleg: <span id="egyenlegKijelzo">5000</span> Ft</div>
+    <div id="jel-ero">Távolság érzékelő: Keresés...</div>
     <hr style="border-color: #333;">
 
     <h3>[ 1. Telefon: TERMINÁL ]</h3>
-    <input type="number" id="osszegInput" placeholder="Beírandó összeg (Ft)" value="1000">
-    <button class="btn-term" onclick="fizetesKerese()">Pénz levonása (Kérés)</button>
+    <input type="number" id="osszegInput" placeholder="Összeg (Ft)" value="1000">
+    <button class="btn-term" onclick="inditTerminal()">Bluetooth Terminál Indítása</button>
 
     <h3>[ 2. Telefon: FIZETŐ ]</h3>
-    <button class="btn-pay" onclick="fizetoModBe()">Fizető mód aktiválása</button>
+    <button class="btn-pay" onclick="inditFizeto()">Fizetőként bejelentkezés</button>
 
-    <div id="statusz">Válassz funkciót a telefonodon!</div>
+    <div id="statusz">Indítsd el a rendszert a gombokkal!</div>
 </div>
 
 <script>
-    let sajatLat = 0;
-    let sajatLon = 0;
     let egyenleg = 5000;
     let szerep = "none";
+    let beirtOsszeg = 0;
 
+    // Online valós idejű kommunikáció
     const pubnub = new PubNub({
         publishKey: "pub-c-cb677fa9-0d1a-4933-bfdd-a01c80145217",
         subscribeKey: "sub-c-497df57a-9bb7-11eb-bc5a-a2ff7d4dfbf7",
-        uuid: "user_" + Math.floor(Math.random() * 1000)
+        uuid: "bt_user_" + Math.floor(Math.random() * 1000)
     });
+    pubnub.subscribe({ channels: ['milney_bt_channel'] });
 
-    pubnub.subscribe({ channels: ['milney_payment_channel'] });
-
-    // GPS folyamatos, kényszerített frissítése a lehető legpontosabb módban
-    if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(position => {
-            sajatLat = position.coords.latitude;
-            sajatLon = position.coords.longitude;
-            document.getElementById('gps-info').innerHTML = `📍 GPS OK (Pontosság: ±${Math.round(position.coords.accuracy)}m)<br><small>Lat: ${sajatLat.toFixed(5)}, Lon: ${sajatLon.toFixed(5)}</small>`;
-        }, error => {
-            document.getElementById('gps-info').innerHTML = "❌ GPS hiba! Engedélyezd a helyadatokat.";
-        }, { 
-            enableHighAccuracy: true, // Kötelezően a GPS chipet használja, ne a wifit
-            timeout: 5000, 
-            maximumAge: 0 
-        });
-    }
-
-    function tavolsagKiszamolo(lat1, lon1, lat2, lon2) {
-        const R = 6371e3; 
-        const phi1 = lat1 * Math.PI/180;
-        const phi2 = lat2 * Math.PI/180;
-        const deltaPhi = (lat2-lat1) * Math.PI/180;
-        const deltaLambda = (lon2-lon1) * Math.PI/180;
-
-        const a = Math.sin(deltaPhi/2) * Math.sin(deltaPhi/2) +
-                  Math.cos(phi1) * Math.cos(phi2) *
-                  Math.sin(deltaLambda/2) * Math.sin(deltaLambda/2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-        return R * c; 
-    }
-
-    function fizetesKerese() {
-        const levonandoOsszeg = parseInt(document.getElementById('osszegInput').value);
-        if (!levonandoOsszeg || levonandoOsszeg <= 0) {
-            alert("Írj be összeget!");
-            return;
-        }
+    // 1. TELEFON: TERMINÁL INDÍTÁSA
+    async function inditTerminal() {
+        beirtOsszeg = parseInt(document.getElementById('osszegInput').value);
+        if(!beirtOsszeg || beirtOsszeg <= 0) { alert("Írj be összeget!"); return; }
+        
         szerep = "terminal";
-        document.getElementById('statusz').innerHTML = `⏳ Kérés elküldve: ${levonandoOsszeg} Ft. Várakozás...`;
+        document.getElementById('statusz').innerHTML = "⏳ Keresem a közeli fizető telefont Bluetooth-on...";
 
-        pubnub.publish({
-            channel: 'milney_payment_channel',
-            message: {
-                tipus: "FIZETES_KERES",
-                osszeg: levonandoOsszeg,
-                lat: sajatLat,
-                lon: sajatLon
-            }
-        });
+        try {
+            // Megkérjük a Chrome-ot, hogy pásztázza a közeli Bluetooth eszközöket
+            const device = await navigator.bluetooth.requestDevice({
+                acceptAllDevices: true
+            });
+            
+            document.getElementById('statusz').innerHTML = `🔄 Kapcsolódás hozzá: ${device.name}...`;
+
+            // Trükk: Amikor létrejön a fizikai közelség, küldünk egy jelet a hálózatnak
+            pubnub.publish({
+                channel: 'milney_bt_channel',
+                message: { tipus: "BT_FIZETES_KERELEM", osszeg: beirtOsszeg }
+            });
+
+        } catch (error) {
+            document.getElementById('statusz').innerHTML = "Bluetooth hiba: " + error;
+        }
     }
 
-    function fizetoModBe() {
+    // 2. TELEFON: FIZETŐ MÓD
+    function inditFizeto() {
         szerep = "fizeto";
-        document.getElementById('statusz').innerHTML = "📲 Fizető mód aktív. Várja a terminált...";
+        document.getElementById('statusz').innerHTML = "📲 Fizető mód aktív. Tedd a terminál közelébe (5-10 cm)...";
     }
 
+    // HÁTTÉR LOGIKA (PubNub hálózaton)
     pubnub.addListener({
         message: function(event) {
             const adat = event.message;
 
-            if (szerep === "fizeto" && adat.tipus === "FIZETES_KERES") {
-                const tavolsag = tavolsagKiszamolo(sajatLat, sajatLon, adat.lat, adat.lon);
-                
-                // KIÍRJUK A KÉPERNYŐRE A MÉRT TÁVOLSÁGOT
-                document.getElementById('tavolsag-mero').innerHTML = `Mért távolság: ${tavolsag.toFixed(1)} méter`;
-                
-                // MEGEMELTÜK A HATÓTÁVOT 50 MÉTERRE a GPS pontatlansága miatt!
-                if (tavolsag <= 50) { 
-                    if (egyenleg >= adat.osszeg) {
-                        egyenleg -= adat.osszeg;
-                        document.getElementById('egyenlegKijelzo').innerText = egyenleg;
-                        document.getElementById('statusz').innerHTML = `✅ <b>Sikeres fizetés!</b><br>Levonva: ${adat.osszeg} Ft.`;
-                        
-                        pubnub.publish({
-                            channel: 'milney_payment_channel',
-                            message: {
-                                tipus: "SIKERES_NYUGTA",
-                                statusz: "OK",
-                                lat: sajatLat,
-                                lon: sajatLon
-                            }
-                        });
-                    } else {
-                        document.getElementById('statusz').innerHTML = "❌ Nincs elég egyenleg!";
-                    }
+            if (szerep === "fizeto" && adat.tipus === "BT_FIZETES_KERELEM") {
+                if (egyenleg >= adat.osszeg) {
+                    egyenleg -= adat.osszeg;
+                    document.getElementById('egyenlegKijelzo').innerText = egyenleg;
+                    document.getElementById('statusz').innerHTML = `✅ <b>Sikeres fizetés követséggel!</b><br>Levonva: ${adat.osszeg} Ft a közeli terminálnak.`;
+                    
+                    pubnub.publish({
+                        channel: 'milney_bt_channel',
+                        message: { tipus: "BT_NYUGTA", statusz: "OK", levont: adat.osszeg }
+                    });
                 } else {
-                    document.getElementById('statusz').innerHTML = `❌ Túl messze vagy a termináltól! (${tavolsag.toFixed(1)}m)`;
+                    document.getElementById('statusz').innerHTML = "❌ Nincs elég egyenleg!";
                 }
             }
 
-            if (szerep === "terminal" && adat.tipus === "SIKERES_NYUGTA") {
-                const tavolsag = tavolsagKiszamolo(sajatLat, sajatLon, adat.lat, adat.lon);
-                document.getElementById('tavolsag-mero').innerHTML = `Mért távolság: ${tavolsag.toFixed(1)} méter`;
-                
-                if (tavolsag <= 50) {
-                    const levont = document.getElementById('osszegInput').value;
-                    document.getElementById('statusz').innerHTML = `💰 <b>Sikeres tranzakció!</b><br>${levont} Ft levonva.`;
-                    szerep = "none";
-                }
+            if (szerep === "terminal" && adat.tipus === "BT_NYUGTA") {
+                document.getElementById('statusz').innerHTML = `💰 <b>Sikeres tranzakció!</b><br>${adat.levont} Ft sikeresen levonva a közeli telefonról.`;
+                szerep = "none";
             }
         }
     });
