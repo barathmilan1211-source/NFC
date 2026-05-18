@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milney Bluetooth Cash</title>
+    <title>Milney Sound Cash</title>
     <script src="https://cdn.pubnub.com/sdk/javascript/pubnub.4.29.9.min.js"></script>
     <style>
         body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
@@ -15,97 +15,117 @@
         .btn-pay { background: #393e46; color: white; border: 2px solid #00adb5; }
         #statusz { margin-top: 20px; padding: 15px; background: #252525; border-radius: 8px; font-size: 14px; min-height: 40px; border-left: 5px solid #00adb5; }
         .egyenleg { font-size: 24px; color: #28c76f; font-weight: bold; margin: 15px 0; }
-        #jel-ero { color: #ff9f43; font-weight: bold; margin: 10px 0; }
     </style>
 </head>
 <body>
 
 <div class="box">
-    <h1>Milney Bluetooth Pay</h1>
+    <h1>Milney Sound Pay</h1>
     
     <div class="egyenleg">Egyenleg: <span id="egyenlegKijelzo">5000</span> Ft</div>
-    <div id="jel-ero">Távolság érzékelő: Keresés...</div>
     <hr style="border-color: #333;">
 
-    <h3>[ 1. Telefon: TERMINÁL ]</h3>
-    <input type="number" id="osszegInput" placeholder="Összeg (Ft)" value="1000">
-    <button class="btn-term" onclick="inditTerminal()">Bluetooth Terminál Indítása</button>
+    <h3>[ 1. Telefon: FIZETŐ ]</h3>
+    <button class="btn-pay" onclick="fizessHanggal()">FIZETÉS (Hangjelzés küldése)</button>
 
-    <h3>[ 2. Telefon: FIZETŐ ]</h3>
-    <button class="btn-pay" onclick="inditFizeto()">Fizetőként bejelentkezés</button>
+    <h3>[ 2. Telefon: TERMINÁL ]</h3>
+    <input type="number" id="osszegInput" placeholder="Levonandó összeg (Ft)" value="1000">
+    <button class="btn-term" onclick="inditTerminalHallgato()">Terminál indítása (Hallgatózás)</button>
 
-    <div id="statusz">Indítsd el a rendszert a gombokkal!</div>
+    <div id="statusz">Indítsd el a rendszert! Közelítsd a telefonokat a hanghoz!</div>
 </div>
 
 <script>
     let egyenleg = 5000;
-    let szerep = "none";
-    let beirtOsszeg = 0;
+    let hallgatozik = false;
 
-    // Online valós idejű kommunikáció
+    // Online hálózati szinkronizáció
     const pubnub = new PubNub({
         publishKey: "pub-c-cb677fa9-0d1a-4933-bfdd-a01c80145217",
         subscribeKey: "sub-c-497df57a-9bb7-11eb-bc5a-a2ff7d4dfbf7",
-        uuid: "bt_user_" + Math.floor(Math.random() * 1000)
+        uuid: "sound_user_" + Math.floor(Math.random() * 1000)
     });
-    pubnub.subscribe({ channels: ['milney_bt_channel'] });
+    pubnub.subscribe({ channels: ['milney_sound_channel'] });
 
-    // 1. TELEFON: TERMINÁL INDÍTÁSA
-    async function inditTerminal() {
-        beirtOsszeg = parseInt(document.getElementById('osszegInput').value);
-        if(!beirtOsszeg || beirtOsszeg <= 0) { alert("Írj be összeget!"); return; }
+    // 1. TELEFON: FIZETŐ (Hangot ad ki)
+    function fizessHanggal() {
+        document.getElementById('statusz').innerHTML = "🔊 Fizetési hang kód küldése...";
         
-        szerep = "terminal";
-        document.getElementById('statusz').innerHTML = "⏳ Keresem a közeli fizető telefont Bluetooth-on...";
+        // Létrehozunk egy nagyon jellegzetes 850 Hz-es sípoló hangot, ami 0.5 másodpercig tart
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(850, audioCtx.currentTime); // 850 Hz a titkos kódunk frekvenciája
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.5); // Fél másodpercig sípol
+    }
+
+    // 2. TELEFON: TERMINÁL (Figyeli a mikrofont)
+    async function inditTerminalHallgato() {
+        const levonando = parseInt(document.getElementById('osszegInput').value);
+        if(!levonando || levonando <= 0) { alert("Írj be összeget!"); return; }
+
+        document.getElementById('statusz').innerHTML = "👂 A terminál fülel... Nyújtsd ide a fizető telefont és nyomd meg rajta a Fizetést!";
+        hallgatozik = true;
 
         try {
-            // Megkérjük a Chrome-ot, hogy pásztázza a közeli Bluetooth eszközöket
-            const device = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true
-            });
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const source = audioCtx.createMediaStreamSource(stream);
             
-            document.getElementById('statusz').innerHTML = `🔄 Kapcsolódás hozzá: ${device.name}...`;
+            // Frekvencia analizátor beállítása
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 2048;
+            source.connect(analyser);
 
-            // Trükk: Amikor létrejön a fizikai közelség, küldünk egy jelet a hálózatnak
-            pubnub.publish({
-                channel: 'milney_bt_channel',
-                message: { tipus: "BT_FIZETES_KERELEM", osszeg: beirtOsszeg }
-            });
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
 
-        } catch (error) {
-            document.getElementById('statusz').innerHTML = "Bluetooth hiba: " + error;
+            function vizsgal() {
+                if (!hallgatozik) return;
+                analyser.getByteFrequencyData(dataArray);
+
+                // Megnézzük a 850 Hz-es frekvenciasávot az audió spektrumban
+                const sampleRate = audioCtx.sampleRate;
+                const bin = Math.round(850 / (sampleRate / analyser.fftSize));
+                const hangerő = dataArray[bin];
+
+                // Ha a hang elég hangos (tehát a telefon max 5-10 centire van a mikrofontól!)
+                if (hangerő > 180) { 
+                    hallgatozik = false; // Leállítjuk a hallgatózást, megvan a találat
+                    stream.getTracks().forEach(track => track.stop()); // Mikrofon lekapcsolása
+
+                    document.getElementById('statusz').innerHTML = "🎵 Hang kód észlelve közvetlen közelről!";
+                    
+                    // Küldjük az online jelet, hogy vonja le a pénzt
+                    pubnub.publish({
+                        channel: 'milney_sound_channel',
+                        message: { tipus: "SOUND_FIZETES_OK", osszeg: levonando }
+                    });
+                }
+                requestAnimationFrame(vizsgal);
+            }
+            vizsgal();
+
+        } catch (err) {
+            document.getElementById('statusz').innerHTML = "Mikrofon hozzáférés megtagadva vagy hiba: " + err;
         }
     }
 
-    // 2. TELEFON: FIZETŐ MÓD
-    function inditFizeto() {
-        szerep = "fizeto";
-        document.getElementById('statusz').innerHTML = "📲 Fizető mód aktív. Tedd a terminál közelébe (5-10 cm)...";
-    }
-
-    // HÁTTÉR LOGIKA (PubNub hálózaton)
+    // ONLINE SZINKRON (A levonás megtörténik)
     pubnub.addListener({
         message: function(event) {
             const adat = event.message;
-
-            if (szerep === "fizeto" && adat.tipus === "BT_FIZETES_KERELEM") {
-                if (egyenleg >= adat.osszeg) {
-                    egyenleg -= adat.osszeg;
-                    document.getElementById('egyenlegKijelzo').innerText = egyenleg;
-                    document.getElementById('statusz').innerHTML = `✅ <b>Sikeres fizetés követséggel!</b><br>Levonva: ${adat.osszeg} Ft a közeli terminálnak.`;
-                    
-                    pubnub.publish({
-                        channel: 'milney_bt_channel',
-                        message: { tipus: "BT_NYUGTA", statusz: "OK", levont: adat.osszeg }
-                    });
-                } else {
-                    document.getElementById('statusz').innerHTML = "❌ Nincs elég egyenleg!";
-                }
-            }
-
-            if (szerep === "terminal" && adat.tipus === "BT_NYUGTA") {
-                document.getElementById('statusz').innerHTML = `💰 <b>Sikeres tranzakció!</b><br>${adat.levont} Ft sikeresen levonva a közeli telefonról.`;
-                szerep = "none";
+            if(adat.tipus === "SOUND_FIZETES_OK") {
+                egyenleg -= adat.osszeg;
+                document.getElementById('egyenlegKijelzo').innerText = egyenleg;
+                document.getElementById('statusz').innerHTML = `💸 <b>Tranzakció Sikeres!</b><br>Levonva: ${adat.osszeg} Ft hangalapú hitelesítéssel.`;
             }
         }
     });
