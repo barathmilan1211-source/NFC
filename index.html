@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milney GPS Digital Cash</title>
+    <title>Milney GPS Digital Cash v2</title>
     <script src="https://cdn.pubnub.com/sdk/javascript/pubnub.4.29.9.min.js"></script>
     <style>
         body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
@@ -15,20 +15,22 @@
         .btn-pay { background: #393e46; color: white; border: 2px solid #00adb5; }
         #statusz { margin-top: 20px; padding: 15px; background: #252525; border-radius: 8px; font-size: 14px; min-height: 40px; border-left: 5px solid #00adb5; }
         .egyenleg { font-size: 20px; color: #28c76f; font-weight: bold; margin: 15px 0; }
+        #tavolsag-mero { font-weight: bold; color: #ff9f43; margin: 10px 0; font-size: 16px; }
     </style>
 </head>
 <body>
 
 <div class="box">
-    <h1>Milney GPS Pay</h1>
+    <h1>Milney GPS Pay v2</h1>
     
     <div class="egyenleg">Saját egyenleg: <span id="egyenlegKijelzo">5000</span> Ft</div>
     
-    <div id="gps-info">GPS lekérése...</div>
+    <div id="gps-info">GPS koordináták lekérése...</div>
+    <div id="tavolsag-mero">Mért távolság a másik telefontól: -</div>
     <hr style="border-color: #333;">
 
     <h3>[ 1. Telefon: TERMINÁL ]</h3>
-    <input type="number" id="osszegInput" placeholder="Beírandó összeg (Ft)">
+    <input type="number" id="osszegInput" placeholder="Beírandó összeg (Ft)" value="1000">
     <button class="btn-term" onclick="fizetesKerese()">Pénz levonása (Kérés)</button>
 
     <h3>[ 2. Telefon: FIZETŐ ]</h3>
@@ -43,30 +45,31 @@
     let egyenleg = 5000;
     let szerep = "none";
 
-    // Ingyenes teszt kulcsok a valós idejű hálózathoz
     const pubnub = new PubNub({
         publishKey: "pub-c-cb677fa9-0d1a-4933-bfdd-a01c80145217",
         subscribeKey: "sub-c-497df57a-9bb7-11eb-bc5a-a2ff7d4dfbf7",
         uuid: "user_" + Math.floor(Math.random() * 1000)
     });
 
-    // Feliratkozunk a közös fizetési csatornára
     pubnub.subscribe({ channels: ['milney_payment_channel'] });
 
-    // GPS Pozíció folyamatos követése
+    // GPS folyamatos, kényszerített frissítése a lehető legpontosabb módban
     if (navigator.geolocation) {
         navigator.geolocation.watchPosition(position => {
             sajatLat = position.coords.latitude;
             sajatLon = position.coords.longitude;
-            document.getElementById('gps-info').innerHTML = `📍 GPS OK (Pontosság: ±${Math.round(position.coords.accuracy)}m)`;
+            document.getElementById('gps-info').innerHTML = `📍 GPS OK (Pontosság: ±${Math.round(position.coords.accuracy)}m)<br><small>Lat: ${sajatLat.toFixed(5)}, Lon: ${sajatLon.toFixed(5)}</small>`;
         }, error => {
-            document.getElementById('gps-info').innerHTML = "❌ GPS hiba! Engedélyezd a helymeghatározást.";
-        }, { enableHighAccuracy: true });
+            document.getElementById('gps-info').innerHTML = "❌ GPS hiba! Engedélyezd a helyadatokat.";
+        }, { 
+            enableHighAccuracy: true, // Kötelezően a GPS chipet használja, ne a wifit
+            timeout: 5000, 
+            maximumAge: 0 
+        });
     }
 
-    // Két GPS koordináta távolságának kiszámítása méterben (Haversine formula)
     function tavolsagKiszamolo(lat1, lon1, lat2, lon2) {
-        const R = 6371e3; // Föld sugara méterben
+        const R = 6371e3; 
         const phi1 = lat1 * Math.PI/180;
         const phi2 = lat2 * Math.PI/180;
         const deltaPhi = (lat2-lat1) * Math.PI/180;
@@ -77,20 +80,18 @@
                   Math.sin(deltaLambda/2) * Math.sin(deltaLambda/2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 
-        return R * c; // Méterben kapjuk meg
+        return R * c; 
     }
 
-    // 1. TELEFON (TERMINÁL): Pénz kérése gomb
     function fizetesKerese() {
         const levonandoOsszeg = parseInt(document.getElementById('osszegInput').value);
         if (!levonandoOsszeg || levonandoOsszeg <= 0) {
-            alert("Írj be egy normális összeget!");
+            alert("Írj be összeget!");
             return;
         }
         szerep = "terminal";
-        document.getElementById('statusz').innerHTML = `⏳ Kérés elküldve: ${levonandoOsszeg} Ft. Várakozás a közeli fizetőre...`;
+        document.getElementById('statusz').innerHTML = `⏳ Kérés elküldve: ${levonandoOsszeg} Ft. Várakozás...`;
 
-        // Elküldjük a hálózatra a koordinátáinkat és a kért összeget
         pubnub.publish({
             channel: 'milney_payment_channel',
             message: {
@@ -102,30 +103,28 @@
         });
     }
 
-    // 2. TELEFON (FIZETŐ): Bejelentkezik, hogy ő fizetni akar
     function fizetoModBe() {
         szerep = "fizeto";
-        document.getElementById('statusz').innerHTML = "📲 Fizető mód aktív. Várakozás a terminál jelére...";
+        document.getElementById('statusz').innerHTML = "📲 Fizető mód aktív. Várja a terminált...";
     }
 
-    // HÁTTÉR LOGIKA: Figyeljük a hálózaton érkező üzeneteket
     pubnub.addListener({
         message: function(event) {
             const adat = event.message;
 
-            // Ha FIZETŐ vagyok és érkezik egy KÉRÉS a hálózatról
             if (szerep === "fizeto" && adat.tipus === "FIZETES_KERES") {
-                // Kiszámoljuk, milyen messze van tőlünk a Terminál
                 const tavolsag = tavolsagKiszamolo(sajatLat, sajatLon, adat.lat, adat.lon);
                 
-                // Mivel a GPS pontossága ingadozik, 15 méteres körzeten belül elfogadjuk "egymás mellettinek"
-                if (tavolsag <= 15) { 
+                // KIÍRJUK A KÉPERNYŐRE A MÉRT TÁVOLSÁGOT
+                document.getElementById('tavolsag-mero').innerHTML = `Mért távolság: ${tavolsag.toFixed(1)} méter`;
+                
+                // MEGEMELTÜK A HATÓTÁVOT 50 MÉTERRE a GPS pontatlansága miatt!
+                if (tavolsag <= 50) { 
                     if (egyenleg >= adat.osszeg) {
                         egyenleg -= adat.osszeg;
                         document.getElementById('egyenlegKijelzo').innerText = egyenleg;
-                        document.getElementById('statusz').innerHTML = `✅ <b>Sikeres fizetés!</b><br>Levonva: ${adat.osszeg} Ft a közeli terminál javára.`;
+                        document.getElementById('statusz').innerHTML = `✅ <b>Sikeres fizetés!</b><br>Levonva: ${adat.osszeg} Ft.`;
                         
-                        // Visszaküldjük a terminálnak, hogy a levonás sikeres volt
                         pubnub.publish({
                             channel: 'milney_payment_channel',
                             message: {
@@ -136,18 +135,21 @@
                             }
                         });
                     } else {
-                        document.getElementById('statusz').innerHTML = "❌ Nincs elég egyenleged a fizetéshez!";
+                        document.getElementById('statusz').innerHTML = "❌ Nincs elég egyenleg!";
                     }
+                } else {
+                    document.getElementById('statusz').innerHTML = `❌ Túl messze vagy a termináltól! (${tavolsag.toFixed(1)}m)`;
                 }
             }
 
-            // Ha TERMINÁL vagyok és megérkezik a SIKERES NYUGTA a közelemből
             if (szerep === "terminal" && adat.tipus === "SIKERES_NYUGTA") {
                 const tavolsag = tavolsagKiszamolo(sajatLat, sajatLon, adat.lat, adat.lon);
-                if (tavolsag <= 15) {
+                document.getElementById('tavolsag-mero').innerHTML = `Mért távolság: ${tavolsag.toFixed(1)} méter`;
+                
+                if (tavolsag <= 50) {
                     const levont = document.getElementById('osszegInput').value;
-                    document.getElementById('statusz').innerHTML = `💰 <b>Sikeres tranzakció!</b><br>${levont} Ft sikeresen levonva a közeli ügyféltől.`;
-                    szerep = "none"; // Reset
+                    document.getElementById('statusz').innerHTML = `💰 <b>Sikeres tranzakció!</b><br>${levont} Ft levonva.`;
+                    szerep = "none";
                 }
             }
         }
