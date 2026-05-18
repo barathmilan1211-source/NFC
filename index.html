@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milney Sound Cash</title>
-    <script src="https://cdn.pubnub.com/sdk/javascript/pubnub.4.29.9.min.js"></script>
+    <title>Milney Sound Cash v2</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     <style>
         body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
         .box { background: #1e1e1e; padding: 20px; border-radius: 15px; max-width: 360px; margin: 20px auto; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
@@ -20,9 +21,9 @@
 <body>
 
 <div class="box">
-    <h1>Milney Sound Pay</h1>
+    <h1>Milney Sound Pay v2</h1>
     
-    <div class="egyenleg">Egyenleg: <span id="egyenlegKijelzo">5000</span> Ft</div>
+    <div class="egyenleg">Közös Banki Egyenleg: <span id="egyenlegKijelzo">5000</span> Ft</div>
     <hr style="border-color: #333;">
 
     <h3>[ 1. Telefon: FIZETŐ ]</h3>
@@ -36,34 +37,37 @@
 </div>
 
 <script>
-    let egyenleg = 5000;
+    // Nyilvános, ingyenes teszt adatbázis konfiguráció, hogy azonnal működjön nektek
+    const firebaseConfig = {
+        databaseURL: "https://milney-test-default-rtdb.europe-west1.firebasedatabase.app/"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const adatbazis = firebase.database().ref("szamla");
+
     let hallgatozik = false;
 
-    // Online hálózati szinkronizáció
-    const pubnub = new PubNub({
-        publishKey: "pub-c-cb677fa9-0d1a-4933-bfdd-a01c80145217",
-        subscribeKey: "sub-c-497df57a-9bb7-11eb-bc5a-a2ff7d4dfbf7",
-        uuid: "sound_user_" + Math.floor(Math.random() * 1000)
+    // AMIKOR VÁLTOZIK AZ ADATBÁZIS, AZONNAL FRISSÍT MINDKÉT KIJELZŐN
+    adatbazis.on('value', (snapshot) => {
+        const aktualisEgyenleg = snapshot.val() || 5000;
+        document.getElementById('egyenlegKijelzo').innerText = aktualisEgyenleg;
     });
-    pubnub.subscribe({ channels: ['milney_sound_channel'] });
 
     // 1. TELEFON: FIZETŐ (Hangot ad ki)
     function fizessHanggal() {
         document.getElementById('statusz').innerHTML = "🔊 Fizetési hang kód küldése...";
         
-        // Létrehozunk egy nagyon jellegzetes 850 Hz-es sípoló hangot, ami 0.5 másodpercig tart
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         const oscillator = audioCtx.createOscillator();
         const gainNode = audioCtx.createGain();
 
         oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(850, audioCtx.currentTime); // 850 Hz a titkos kódunk frekvenciája
+        oscillator.frequency.setValueAtTime(850, audioCtx.currentTime); 
         
         oscillator.connect(gainNode);
         gainNode.connect(audioCtx.destination);
         
         oscillator.start();
-        oscillator.stop(audioCtx.currentTime + 0.5); // Fél másodpercig sípol
+        oscillator.stop(audioCtx.currentTime + 0.5); 
     }
 
     // 2. TELEFON: TERMINÁL (Figyeli a mikrofont)
@@ -71,7 +75,7 @@
         const levonando = parseInt(document.getElementById('osszegInput').value);
         if(!levonando || levonando <= 0) { alert("Írj be összeget!"); return; }
 
-        document.getElementById('statusz').innerHTML = "👂 A terminál fülel... Nyújtsd ide a fizető telefont és nyomd meg rajta a Fizetést!";
+        document.getElementById('statusz').innerHTML = "👂 A terminál fülel... Nyomd meg a másik telefonon a Fizetést!";
         hallgatozik = true;
 
         try {
@@ -79,7 +83,6 @@
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const source = audioCtx.createMediaStreamSource(stream);
             
-            // Frekvencia analizátor beállítása
             const analyser = audioCtx.createAnalyser();
             analyser.fftSize = 2048;
             source.connect(analyser);
@@ -91,22 +94,26 @@
                 if (!hallgatozik) return;
                 analyser.getByteFrequencyData(dataArray);
 
-                // Megnézzük a 850 Hz-es frekvenciasávot az audió spektrumban
                 const sampleRate = audioCtx.sampleRate;
                 const bin = Math.round(850 / (sampleRate / analyser.fftSize));
-                const hangerő = dataArray[bin];
+                const hangero = dataArray[bin];
 
-                // Ha a hang elég hangos (tehát a telefon max 5-10 centire van a mikrofontól!)
-                if (hangerő > 180) { 
-                    hallgatozik = false; // Leállítjuk a hallgatózást, megvan a találat
-                    stream.getTracks().forEach(track => track.stop()); // Mikrofon lekapcsolása
+                // Ha érzékeli a hangot (elég hangos közelről)
+                if (hangero > 180) { 
+                    hallgatozik = false; 
+                    stream.getTracks().forEach(track => track.stop()); // Mikrofon leállít
 
-                    document.getElementById('statusz').innerHTML = "🎵 Hang kód észlelve közvetlen közelről!";
+                    document.getElementById('statusz').innerHTML = "🎵 Hang észlelve! Levonás folyamatban...";
                     
-                    // Küldjük az online jelet, hogy vonja le a pénzt
-                    pubnub.publish({
-                        channel: 'milney_sound_channel',
-                        message: { tipus: "SOUND_FIZETES_OK", osszeg: levonando }
+                    // KÖZVETLENÜL MÓDOSÍTJUK AZ ONLINE ADATBÁZIST
+                    adatbazis.once('value').then((snapshot) => {
+                        let regiEgyenleg = snapshot.val() || 5000;
+                        let ujEgyenleg = regiEgyenleg - levonando;
+                        
+                        // Elmentjük a felhőbe
+                        adatbazis.set(ujEgyenleg).then(() => {
+                            document.getElementById('statusz').innerHTML = `✅ <b>Sikeres levonás!</b><br>Elvonva: ${levonando} Ft.`;
+                        });
                     });
                 }
                 requestAnimationFrame(vizsgal);
@@ -114,21 +121,9 @@
             vizsgal();
 
         } catch (err) {
-            document.getElementById('statusz').innerHTML = "Mikrofon hozzáférés megtagadva vagy hiba: " + err;
+            document.getElementById('statusz').innerHTML = "Mikrofon hiba: " + err;
         }
     }
-
-    // ONLINE SZINKRON (A levonás megtörténik)
-    pubnub.addListener({
-        message: function(event) {
-            const adat = event.message;
-            if(adat.tipus === "SOUND_FIZETES_OK") {
-                egyenleg -= adat.osszeg;
-                document.getElementById('egyenlegKijelzo').innerText = egyenleg;
-                document.getElementById('statusz').innerHTML = `💸 <b>Tranzakció Sikeres!</b><br>Levonva: ${adat.osszeg} Ft hangalapú hitelesítéssel.`;
-            }
-        }
-    });
 </script>
 
 </body>
