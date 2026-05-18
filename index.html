@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Milney Digital Cash</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            text-align: center;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 400px;
+            margin: 0 auto;
+            background: #1e1e1e;
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+        h1 { color: #00adb5; font-size: 28px; margin-bottom: 30px; }
+        button {
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            font-size: 18px;
+            font-weight: bold;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .btn-pay { background-color: #00adb5; color: white; }
+        .btn-term { background-color: #393e46; color: white; border: 2px solid #00adb5; }
+        .btn-pay:active, .btn-term:active { transform: scale(0.98); }
+        #status {
+            margin-top: 30px;
+            padding: 15px;
+            background: #252525;
+            border-radius: 10px;
+            font-size: 16px;
+            min-height: 50px;
+            border-left: 5px solid #00adb5;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Milney NFC Fizetés</h1>
+    
+    <button class="btn-pay" onclick="inditKuldés()">Pénz küldése (1000 Ft)</button>
+    <button class="btn-term" onclick="inditOlvasas()">Terminál mód (Fogadás)</button>
+
+    <div id="status">Válassz egy funkciót a kezdéshez!</div>
+</div>
+
+<script>
+    const statuszKijelzo = document.getElementById('status');
+
+    // 1. FUNKCIÓ: Pénz küldése (NFC Írás)
+    async function inditKuldés() {
+        if ('NDEFReader' in window) {
+            try {
+                const ndef = new NDEFReader();
+                statuszKijelzo.innerHTML = "Érintsd a telefonod a terminálhoz a küldéshez...";
+                statuszKijelzo.style.borderColor = "#ff9f43";
+                
+                // Felkészítjük az adatot küldésre
+                await ndef.write("SIKERES_FIZETES_1000_FT");
+                
+                statuszKijelzo.innerHTML = "💰 1000 Ft sikeresen átadva!";
+                statuszKijelzo.style.borderColor = "#28c76f";
+            } catch (error) {
+                statuszKijelzo.innerHTML = "Hiba a küldés során: " + error;
+                statuszKijelzo.style.borderColor = "#ea5455";
+            }
+        } else {
+            statuszKijelzo.innerHTML = "Az NFC nem támogatott ezen a böngészőn/telefonon! (Használj Chrome-ot Androidon)";
+        }
+    }
+
+    // 2. FUNKCIÓ: Pénz fogadása (NFC Olvasás)
+    async function inditOlvasas() {
+        if ('NDEFReader' in window) {
+            try {
+                const ndef = new NDEFReader();
+                await ndef.scan();
+                statuszKijelzo.innerHTML = "📲 Terminál aktív. Várja a fizető felet...";
+                statuszKijelzo.style.borderColor = "#00adb5";
+
+                ndef.onreading = event => {
+                    const decoder = new TextDecoder();
+                    for (const record of event.message.records) {
+                        const kapottAdat = decoder.decode(record.data);
+                        
+                        if(kapottAdat === "SIKERES_FIZETES_1000_FT") {
+                            statuszKijelzo.innerHTML = "✅ <b>Sikeres fizetés!</b><br>Beérkezett: 1000 Ft";
+                            statuszKijelzo.style.borderColor = "#28c76f";
+                        } else {
+                            statuszKijelzo.innerHTML = "Ismeretlen NFC adat: " + kapottAdat;
+                        }
+                    }
+                };
+            } catch (error) {
+                statuszKijelzo.innerHTML = "Hiba az olvasásnál: " + error;
+                statuszKijelzo.style.borderColor = "#ea5455";
+            }
+        } else {
+            statuszKijelzo.innerHTML = "Az NFC nem támogatott ezen a böngészőn/telefonon!";
+        }
+    }
+</script>
+
+</body>
+</html>
