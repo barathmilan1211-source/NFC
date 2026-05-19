@@ -1,46 +1,62 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
-import os
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Milney Helyi NFC</title>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
+        .card { background: #1e1e1e; padding: 30px; border-radius: 15px; max-width: 300px; margin: 40px auto; border: 2px solid #00adb5; }
+        .siker { color: #00ff88; font-weight: bold; font-size: 24px; }
+    </style>
+</head>
+<body>
 
-EGYENLEG_FAJL = "egyenlegek.json"
+<div class="card">
+    <h2>Milney Érintős Terminál</h2>
+    <p>Nyomd rá a telefonod hátulját a Pi-re a fizetéshez!</p>
+    <div id="kijelzo" style="font-size: 18px; margin-top: 20px;">Várakozás az érintésre...</div>
+</div>
 
-if not os.path.exists(EGYENLEG_FAJL):
-    with open(EGYENLEG_FAJL, "w") as f:
-        json.dump({"milan": 5000, "teso": 5000}, f)
+<script>
+    // Mivel a térerőt böngészőből közvetlenül nem adja ki a Google, a hálózati sebesség (Network Information API)
+    // hirtelen megugrását használjuk ki, ami akkor történik, ha 2 centire viszed a telefont a Pi antennájától!
+    
+    let fizetett = false;
 
-class MilneyServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        # Ha a telefon kéri a HTML oldalt
-        if self.path == "/":
-            self.send_response(200)
-            self.send_header("Content-type", "text/html; charset=utf-8")
-            self.end_headers()
+    function figyelő() {
+        if (navigator.connection) {
+            let sebesseg = navigator.connection.downlink;
             
-            # Beolvassuk a lenti HTML oldalt
-            with open("index.html", "r", encoding="utf-8") as f:
-                self.wfile.write(f.read().encode("utf-8"))
+            // Ha szinte hozzáér a telefon a Pi-hez, a helyi adatátvitel sebessége hirtelen felugrik a maximumra
+            if (sebesseg > 8 && !fizetett) {
+                fizetett = true;
+                document.getElementById("kijelzo").innerText = "⚡ Érintés észlelve! Kommunikáció...";
                 
-    def do_POST(self):
-        # Ha a telefon elküldi a fizetési parancsot a közelség miatt
-        if self.path == "/fizetes":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.end_headers()
-            
-            with open(EGYENLEG_FAJL, "r") as f:
-                szamlak = json.load(f)
-                
-            # Levonunk 1000 Ft-ot Milántól
-            if szamlak["milan"] >= 1000:
-                szamlak["milan"] -= 1000
-                with open(EGYENLEG_FAJL, "w") as f:
-                    json.dump(szamlak, f)
-                valasz = {"statusz": "siker", "uj_egyenleg": szamlak["milan"]}
-            else:
-                valasz = {"statusz": "hiba", "uzenet": "Nincs elég pénz!"}
-                
-            self.wfile.write(json.dumps(valasz).encode("utf-8"))
+                // Azonnal küldünk egy jelet a Pi szerverének, hogy vonja le a pénzt offline
+                fetch("/fizetes", { method: "POST" })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.statusz === "siker") {
+                        // Megszólaltatjuk a telefon gyári pittyenését (beépített audio)
+                        let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                        let osc = audioCtx.createOscillator();
+                        osc.type = "sine";
+                        osc.frequency.value = 1200; // Magas pittyenés, mint a boltban
+                        osc.connect(audioCtx.destination);
+                        osc.start();
+                        setTimeout(() => osc.stop(), 150);
 
-print("=== Milney Helyi Szerver Elindult ===")
-server = HTTPServer(("0.0.0.0", 8080), MilneyServer)
-server.serve_forever()
+                        document.getElementById("kijelzo").innerHTML = `<span class="siker">✅ SIKERES FIZETÉS!<br>-1000 Ft</span><br><br>Új egyenleg: ${data.uj_egyenleg} Ft`;
+                    }
+                });
+            }
+        }
+    }
+
+    // Másodpercenként tízszer ellenőrizzük a fizikai közelség okozta hálózati változást
+    setInterval(figyelő, 100);
+</script>
+
+</body>
+</html>
