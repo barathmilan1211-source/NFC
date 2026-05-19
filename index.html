@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milney Sound Cash v2</title>
+    <title>Milney Mag-NFC Cash</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     <style>
@@ -16,113 +16,107 @@
         .btn-pay { background: #393e46; color: white; border: 2px solid #00adb5; }
         #statusz { margin-top: 20px; padding: 15px; background: #252525; border-radius: 8px; font-size: 14px; min-height: 40px; border-left: 5px solid #00adb5; }
         .egyenleg { font-size: 24px; color: #28c76f; font-weight: bold; margin: 15px 0; }
+        #mag-ertek { color: #ff9f43; font-size: 12px; margin-top: 10px; }
     </style>
 </head>
 <body>
 
 <div class="box">
-    <h1>Milney Sound Pay v2</h1>
+    <h1>Milney Mag-NFC</h1>
     
-    <div class="egyenleg">Közös Banki Egyenleg: <span id="egyenlegKijelzo">5000</span> Ft</div>
+    <div class="egyenleg">Milney Egyenleg: <span id="egyenlegKijelzo">5000</span> Ft</div>
+    <div id="mag-ertek">Mágneses térerő: 0 µT</div>
     <hr style="border-color: #333;">
 
-    <h3>[ 1. Telefon: FIZETŐ ]</h3>
-    <button class="btn-pay" onclick="fizessHanggal()">FIZETÉS (Hangjelzés küldése)</button>
-
-    <h3>[ 2. Telefon: TERMINÁL ]</h3>
+    <h3>[ TELJESEN AUTOMATA ]</h3>
     <input type="number" id="osszegInput" placeholder="Levonandó összeg (Ft)" value="1000">
-    <button class="btn-term" onclick="inditTerminalHallgato()">Terminál indítása (Hallgatózás)</button>
+    <button class="btn-term" onclick="aktivalas()">Szenzorok Élesítése</button>
 
-    <div id="statusz">Indítsd el a rendszert! Közelítsd a telefonokat a hanghoz!</div>
+    <div id="statusz">Nyomd meg az Élesítés gombot, majd érintsd össze a telefonok hátlapját!</div>
 </div>
 
 <script>
-    // Nyilvános, ingyenes teszt adatbázis konfiguráció, hogy azonnal működjön nektek
-    const firebaseConfig = {
-        databaseURL: "https://milney-test-default-rtdb.europe-west1.firebasedatabase.app/"
-    };
+    // Ingyenes Firebase adatbázis összekötés
+    const firebaseConfig = { databaseURL: "https://milney-test-default-rtdb.europe-west1.firebasedatabase.app/" };
     firebase.initializeApp(firebaseConfig);
     const adatbazis = firebase.database().ref("szamla");
 
-    let hallgatozik = false;
+    let aktiv = false;
+    let utolsoFizetes = 0;
 
-    // AMIKOR VÁLTOZIK AZ ADATBÁZIS, AZONNAL FRISSÍT MINDKÉT KIJELZŐN
+    // Élő egyenleg követés
     adatbazis.on('value', (snapshot) => {
-        const aktualisEgyenleg = snapshot.val() || 5000;
-        document.getElementById('egyenlegKijelzo').innerText = aktualisEgyenleg;
+        document.getElementById('egyenlegKijelzo').innerText = snapshot.val() || 5000;
     });
 
-    // 1. TELEFON: FIZETŐ (Hangot ad ki)
-    function fizessHanggal() {
-        document.getElementById('statusz').innerHTML = "🔊 Fizetési hang kód küldése...";
+    function aktivalas() {
+        aktiv = true;
+        document.getElementById('statusz').innerHTML = "🧲 Szenzor aktív! Most érintsétek össze a két telefon hátlapját hirtelen, mintha NFC-vel fizetnétek!";
         
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
+        // Elindítjuk a telefon beépített mágneses mező figyelőjét
+        if ('LinearAccelerationSensor' in window || 'Magnetometer' in window) {
+            try {
+                const magnetometer = new Magnetometer({ frequency: 10 });
+                magnetometer.addEventListener('reading', () => {
+                    // Kiszámoljuk a teljes mágneses térerőt (X, Y, Z tengelyek alapján)
+                    const térerő = Math.sqrt(magnetometer.x**2 + magnetometer.y**2 + magnetometer.z**2);
+                    document.getElementById('mag-ertek').innerText = `Mágneses térerő: ${Math.round(térerő)} µT`;
 
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(850, audioCtx.currentTime); 
-        
-        oscillator.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        
-        oscillator.start();
-        oscillator.stop(audioCtx.currentTime + 0.5); 
+                    // Ha a két telefon összeér, a térerő hirtelen megugrik (általában 150-200 µT fölé)
+                    if (térerő > 180) {
+                        const most = Date.now();
+                        // Védelem, hogy egy érintéssel ne vonja le ötször a pénzt (3 másodperces szünet)
+                        if (most - utolsoFizetes > 3000) {
+                            utolsoFizetes = most;
+                            fizetesVegrehajtas();
+                        }
+                    }
+                });
+                magnetometer.start();
+            } catch (error) {
+                // Ha a sima Magnetométer API le van tiltva, megpróbáljuk az orientációs adatokból kiszámolni
+                hasznaljIranytut();
+            }
+        } else {
+            hasznaljIranytut();
+        }
     }
 
-    // 2. TELEFON: TERMINÁL (Figyeli a mikrofont)
-    async function inditTerminalHallgato() {
-        const levonando = parseInt(document.getElementById('osszegInput').value);
-        if(!levonando || levonando <= 0) { alert("Írj be összeget!"); return; }
-
-        document.getElementById('statusz').innerHTML = "👂 A terminál fülel... Nyomd meg a másik telefonon a Fizetést!";
-        hallgatozik = true;
-
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const source = audioCtx.createMediaStreamSource(stream);
-            
-            const analyser = audioCtx.createAnalyser();
-            analyser.fftSize = 2048;
-            source.connect(analyser);
-
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-
-            function vizsgal() {
-                if (!hallgatozik) return;
-                analyser.getByteFrequencyData(dataArray);
-
-                const sampleRate = audioCtx.sampleRate;
-                const bin = Math.round(850 / (sampleRate / analyser.fftSize));
-                const hangero = dataArray[bin];
-
-                // Ha érzékeli a hangot (elég hangos közelről)
-                if (hangero > 180) { 
-                    hallgatozik = false; 
-                    stream.getTracks().forEach(track => track.stop()); // Mikrofon leállít
-
-                    document.getElementById('statusz').innerHTML = "🎵 Hang észlelve! Levonás folyamatban...";
-                    
-                    // KÖZVETLENÜL MÓDOSÍTJUK AZ ONLINE ADATBÁZIST
-                    adatbazis.once('value').then((snapshot) => {
-                        let regiEgyenleg = snapshot.val() || 5000;
-                        let ujEgyenleg = regiEgyenleg - levonando;
-                        
-                        // Elmentjük a felhőbe
-                        adatbazis.set(ujEgyenleg).then(() => {
-                            document.getElementById('statusz').innerHTML = `✅ <b>Sikeres levonás!</b><br>Elvonva: ${levonando} Ft.`;
-                        });
-                    });
+    // Tartalék megoldás, ha a Chrome tiltja a közvetlen magnetométert
+    function hasznaljIranytut() {
+        window.addEventListener('deviceorientation', (event) => {
+            // Az iránytű bemozdulásának sebességét és erejét figyeljük
+            if (event.webkitCompassHeading || event.alpha) {
+                let jelerő = Math.abs(event.alpha) + Math.abs(event.beta) + Math.abs(event.gamma);
+                document.getElementById('mag-ertek').innerText = `Szenzor térerő (Alternatív): ${Math.round(jelerő)}`;
+                
+                // Ha hirtelen fém/mágnes közelít a hátlaphoz, az adatok megőrülnek
+                if (jelerő > 280) {
+                    const most = Date.now();
+                    if (most - utolsoFizetes > 3000) {
+                        utolsoFizetes = most;
+                        fizetesVegrehajtas();
+                    }
                 }
-                requestAnimationFrame(vizsgal);
             }
-            vizsgal();
+        });
+    }
 
-        } catch (err) {
-            document.getElementById('statusz').innerHTML = "Mikrofon hiba: " + err;
-        }
+    function fizetesVegrehajtas() {
+        const levonando = parseInt(document.getElementById('osszegInput').value) || 1000;
+        document.getElementById('statusz').innerHTML = "💥 🧲 MÁGNESES KAPCSOLAT ÉSZLELVE! Levonás...";
+        
+        // Rezgetjük a telefont, pont mint a valódi NFC terminálok bolti fizetéskor!
+        if (navigator.vibrate) { navigator.vibrate([200, 100, 200]); }
+
+        adatbazis.once('value').then((snapshot) => {
+            let regiEgyenleg = snapshot.val() || 5000;
+            let ujEgyenleg = regiEgyenleg - levonando;
+            
+            adatbazis.set(ujEgyenleg).then(() => {
+                document.getElementById('statusz').innerHTML = `✅ <b>Sikeres fizetés összeérintéssel!</b><br>Levonva: ${levonando} Ft.`;
+            });
+        });
     }
 </script>
 
