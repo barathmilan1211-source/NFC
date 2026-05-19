@@ -1,124 +1,46 @@
-<!DOCTYPE html>
-<html lang="hu">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milney Mag-NFC Cash</title>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
-    <style>
-        body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
-        .box { background: #1e1e1e; padding: 20px; border-radius: 15px; max-width: 360px; margin: 20px auto; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        h1 { color: #00adb5; }
-        input { width: 90%; padding: 12px; margin: 10px 0; background: #252525; border: 1px solid #00adb5; color: white; border-radius: 8px; font-size: 16px; text-align: center; }
-        button { width: 95%; padding: 15px; margin: 10px 0; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; }
-        .btn-term { background: #00adb5; color: white; }
-        .btn-pay { background: #393e46; color: white; border: 2px solid #00adb5; }
-        #statusz { margin-top: 20px; padding: 15px; background: #252525; border-radius: 8px; font-size: 14px; min-height: 40px; border-left: 5px solid #00adb5; }
-        .egyenleg { font-size: 24px; color: #28c76f; font-weight: bold; margin: 15px 0; }
-        #mag-ertek { color: #ff9f43; font-size: 12px; margin-top: 10px; }
-    </style>
-</head>
-<body>
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+import os
 
-<div class="box">
-    <h1>Milney Mag-NFC</h1>
-    
-    <div class="egyenleg">Milney Egyenleg: <span id="egyenlegKijelzo">5000</span> Ft</div>
-    <div id="mag-ertek">Mágneses térerő: 0 µT</div>
-    <hr style="border-color: #333;">
+EGYENLEG_FAJL = "egyenlegek.json"
 
-    <h3>[ TELJESEN AUTOMATA ]</h3>
-    <input type="number" id="osszegInput" placeholder="Levonandó összeg (Ft)" value="1000">
-    <button class="btn-term" onclick="aktivalas()">Szenzorok Élesítése</button>
+if not os.path.exists(EGYENLEG_FAJL):
+    with open(EGYENLEG_FAJL, "w") as f:
+        json.dump({"milan": 5000, "teso": 5000}, f)
 
-    <div id="statusz">Nyomd meg az Élesítés gombot, majd érintsd össze a telefonok hátlapját!</div>
-</div>
-
-<script>
-    // Ingyenes Firebase adatbázis összekötés
-    const firebaseConfig = { databaseURL: "https://milney-test-default-rtdb.europe-west1.firebasedatabase.app/" };
-    firebase.initializeApp(firebaseConfig);
-    const adatbazis = firebase.database().ref("szamla");
-
-    let aktiv = false;
-    let utolsoFizetes = 0;
-
-    // Élő egyenleg követés
-    adatbazis.on('value', (snapshot) => {
-        document.getElementById('egyenlegKijelzo').innerText = snapshot.val() || 5000;
-    });
-
-    function aktivalas() {
-        aktiv = true;
-        document.getElementById('statusz').innerHTML = "🧲 Szenzor aktív! Most érintsétek össze a két telefon hátlapját hirtelen, mintha NFC-vel fizetnétek!";
-        
-        // Elindítjuk a telefon beépített mágneses mező figyelőjét
-        if ('LinearAccelerationSensor' in window || 'Magnetometer' in window) {
-            try {
-                const magnetometer = new Magnetometer({ frequency: 10 });
-                magnetometer.addEventListener('reading', () => {
-                    // Kiszámoljuk a teljes mágneses térerőt (X, Y, Z tengelyek alapján)
-                    const térerő = Math.sqrt(magnetometer.x**2 + magnetometer.y**2 + magnetometer.z**2);
-                    document.getElementById('mag-ertek').innerText = `Mágneses térerő: ${Math.round(térerő)} µT`;
-
-                    // Ha a két telefon összeér, a térerő hirtelen megugrik (általában 150-200 µT fölé)
-                    if (térerő > 180) {
-                        const most = Date.now();
-                        // Védelem, hogy egy érintéssel ne vonja le ötször a pénzt (3 másodperces szünet)
-                        if (most - utolsoFizetes > 3000) {
-                            utolsoFizetes = most;
-                            fizetesVegrehajtas();
-                        }
-                    }
-                });
-                magnetometer.start();
-            } catch (error) {
-                // Ha a sima Magnetométer API le van tiltva, megpróbáljuk az orientációs adatokból kiszámolni
-                hasznaljIranytut();
-            }
-        } else {
-            hasznaljIranytut();
-        }
-    }
-
-    // Tartalék megoldás, ha a Chrome tiltja a közvetlen magnetométert
-    function hasznaljIranytut() {
-        window.addEventListener('deviceorientation', (event) => {
-            // Az iránytű bemozdulásának sebességét és erejét figyeljük
-            if (event.webkitCompassHeading || event.alpha) {
-                let jelerő = Math.abs(event.alpha) + Math.abs(event.beta) + Math.abs(event.gamma);
-                document.getElementById('mag-ertek').innerText = `Szenzor térerő (Alternatív): ${Math.round(jelerő)}`;
-                
-                // Ha hirtelen fém/mágnes közelít a hátlaphoz, az adatok megőrülnek
-                if (jelerő > 280) {
-                    const most = Date.now();
-                    if (most - utolsoFizetes > 3000) {
-                        utolsoFizetes = most;
-                        fizetesVegrehajtas();
-                    }
-                }
-            }
-        });
-    }
-
-    function fizetesVegrehajtas() {
-        const levonando = parseInt(document.getElementById('osszegInput').value) || 1000;
-        document.getElementById('statusz').innerHTML = "💥 🧲 MÁGNESES KAPCSOLAT ÉSZLELVE! Levonás...";
-        
-        // Rezgetjük a telefont, pont mint a valódi NFC terminálok bolti fizetéskor!
-        if (navigator.vibrate) { navigator.vibrate([200, 100, 200]); }
-
-        adatbazis.once('value').then((snapshot) => {
-            let regiEgyenleg = snapshot.val() || 5000;
-            let ujEgyenleg = regiEgyenleg - levonando;
+class MilneyServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # Ha a telefon kéri a HTML oldalt
+        if self.path == "/":
+            self.send_response(200)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.end_headers()
             
-            adatbazis.set(ujEgyenleg).then(() => {
-                document.getElementById('statusz').innerHTML = `✅ <b>Sikeres fizetés összeérintéssel!</b><br>Levonva: ${levonando} Ft.`;
-            });
-        });
-    }
-</script>
+            # Beolvassuk a lenti HTML oldalt
+            with open("index.html", "r", encoding="utf-8") as f:
+                self.wfile.write(f.read().encode("utf-8"))
+                
+    def do_POST(self):
+        # Ha a telefon elküldi a fizetési parancsot a közelség miatt
+        if self.path == "/fizetes":
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            
+            with open(EGYENLEG_FAJL, "r") as f:
+                szamlak = json.load(f)
+                
+            # Levonunk 1000 Ft-ot Milántól
+            if szamlak["milan"] >= 1000:
+                szamlak["milan"] -= 1000
+                with open(EGYENLEG_FAJL, "w") as f:
+                    json.dump(szamlak, f)
+                valasz = {"statusz": "siker", "uj_egyenleg": szamlak["milan"]}
+            else:
+                valasz = {"statusz": "hiba", "uzenet": "Nincs elég pénz!"}
+                
+            self.wfile.write(json.dumps(valasz).encode("utf-8"))
 
-</body>
-</html>
+print("=== Milney Helyi Szerver Elindult ===")
+server = HTTPServer(("0.0.0.0", 8080), MilneyServer)
+server.serve_forever()
